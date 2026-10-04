@@ -1388,6 +1388,34 @@ local function draggable(owner, handle, target, opts)
     opts = opts or {}
     local dragging, startPos, startOffset = false, nil, nil
     local scrolls, activeInput
+    local currentPos = target.Position
+    local targetPos = target.Position
+    local smooth = opts.smooth or 0.18          -- lower = smoother / heavier (0.12 - 0.25 is sweet spot)
+    local renderConn
+
+    local function stop()
+        if not dragging then return end
+        dragging = false
+        activeInput = nil
+
+        if scrolls then
+            for _, s in ipairs(scrolls) do
+                pcall(function() s.ScrollingEnabled = true end)
+            end
+            scrolls = nil
+        end
+
+        if renderConn then
+            renderConn:Disconnect()
+            renderConn = nil
+        end
+
+        -- snap to final position so it doesn't float
+        target.Position = targetPos
+        currentPos = targetPos
+
+        if opts.onStop then opts.onStop() end
+    end
 
     track(owner, handle.InputBegan:Connect(function(input)
         if not isClick(input) or dragging then return end
@@ -1395,34 +1423,45 @@ local function draggable(owner, handle, target, opts)
         activeInput = input
         startPos = input.Position
         startOffset = target.Position
+        currentPos = target.Position
+        targetPos = target.Position
         scrolls = ancestorScrolling(handle, false)
-        if opts.onStart then opts.onStart() end
-    end))
 
-    local function stop()
-        if not dragging then return end
-        dragging = false
-        activeInput = nil
-        if scrolls then
-            for _, s in ipairs(scrolls) do pcall(function() s.ScrollingEnabled = true end) end
-            scrolls = nil
-        end
-        if opts.onStop then opts.onStop() end
-    end
+        if opts.onStart then opts.onStart() end
+
+        -- smooth follow loop
+        renderConn = RunService.RenderStepped:Connect(function(dt)
+            if not dragging then return end
+
+            -- exponential lerp (framerate independent)
+            local alpha = 1 - math.exp(-smooth * 60 * dt)
+            currentPos = UDim2.new(
+                currentPos.X.Scale,
+                currentPos.X.Offset + (targetPos.X.Offset - currentPos.X.Offset) * alpha,
+                currentPos.Y.Scale,
+                currentPos.Y.Offset + (targetPos.Y.Offset - currentPos.Y.Offset) * alpha
+            )
+            target.Position = currentPos
+        end)
+    end))
 
     track(owner, handle.InputEnded:Connect(function(input)
         if ownsInput(activeInput, input) then stop() end
     end))
+
     track(owner, UserInputService.InputEnded:Connect(function(input)
         if ownsInput(activeInput, input) then stop() end
     end))
+
     track(owner, UserInputService.InputChanged:Connect(function(input)
         if not dragging or not tracksInput(activeInput, input) then return end
+
         local delta = input.Position - startPos
         local p = UDim2.new(
             startOffset.X.Scale, startOffset.X.Offset + delta.X,
             startOffset.Y.Scale, startOffset.Y.Offset + delta.Y
         )
+
         if opts.clamp then
             local vp = viewport()
             local abs = target.AbsoluteSize
@@ -1434,7 +1473,8 @@ local function draggable(owner, handle, target, opts)
             ay = math.clamp(ay, minY, maxY)
             p = UDim2.new(0, ax, 0, ay)
         end
-        target.Position = p
+
+        targetPos = p          -- only update the target, RenderStepped does the smooth follow
         if opts.onMove then opts.onMove(p) end
     end))
 end
